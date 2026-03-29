@@ -1,198 +1,263 @@
 import random
-
-from pandas.core.roperator import rand_
-
-class Node:
-    def __init__(self, number):
-        self.number = number
-        self.neighbours = []
-
-    def __repr__(self):
-        return f"({self.number})"
-
-    def add_neighbour(self, new_neighbour):
-        if new_neighbour not in self.neighbours:
-            self.neighbours.append(new_neighbour)
-        if self not in new_neighbour.neighbours:
-            new_neighbour.neighbours.append(self)
-
-    def remove_neighbor(self, neighbour):
-        if neighbour in self.neighbours:
-            self.neighbours.remove(neighbour)
-            neighbour.remove_neighbor(self)
-
-    def node_swap(self, other_node):
-        if other_node in self.neighbours:
-            self.number, other_node.number = other_node.number, self.number
-
-    def get_neighbours(self):
-        return self.neighbours
-
-    def get_number(self):
-        return self.number
-
-    def set_number(self, new_number):
-        self.number = new_number
-        return self.number
+import time
+import sys
 
 class Board:
+    MOVE_MAP = {
+        'L': lambda z, w, h: z-1 if z % w > 0 else None,
+        'R': lambda z, w, h: z+1 if z % w < w-1 else None,
+        'U': lambda z, w, h: z-w if z // w > 0 else None,
+        'D': lambda z, w, h: z+w if z // w < h-1 else None
+    }
+
     def __init__(self, width, height):
         self.width = width
         self.height = height
-        self.nodes = []
-
+        self.size = width * height
+        self.tiles = list(range(1, self.size)) + [0]
+        self.goal = self.tiles.copy()
+        self.zero_index = self.size - 1
         self.depth = 0
+        self.neighbours_map = [self._compute_neighbours(i) for i in range(self.size)]
 
-        size = width * height
+    def _compute_neighbours(self, index):
+        neighbours = []
+        row, col = divmod(index, self.width)
+        if col > 0: neighbours.append(index - 1)
+        if col < self.width - 1: neighbours.append(index + 1)
+        if row > 0: neighbours.append(index - self.width)
+        if row < self.height - 1: neighbours.append(index + self.width)
+        return neighbours
 
-        for i in range(size):
-            if i == size-1:
-                self.nodes.append(Node(0))
-            else:
-                self.nodes.append(Node(i+1))
+    def swap(self, i, j):
+        if self.tiles[i] == 0:
+            self.zero_index = j
+        elif self.tiles[j] == 0:
+            self.zero_index = i
+        self.tiles[i], self.tiles[j] = self.tiles[j], self.tiles[i]
 
-        for i in range(size):
-            row = i // width
-            col = i % width
+    def load_from_list(self, tiles):
+        if len(tiles) != self.size:
+            raise ValueError("Wrong number of elements")
+        if set(tiles) != set(range(self.size)):
+            raise ValueError("Tiles must be 0..N unique")
+        self.tiles = tiles.copy()
+        self.zero_index = self.tiles.index(0)
 
-            if col > 0:
-                self.nodes[i].add_neighbour(self.nodes[i - 1])
+    def randomise(self, itr=7, avoid_backtracking=True):
+        self.depth = itr
+        previous = None
+        for _ in range(itr):
+            zero = self.zero_index
+            neighbours = self.neighbours_map[zero]
+            if avoid_backtracking and previous is not None:
+                neighbours = [n for n in neighbours if n != previous]
+            move = random.choice(neighbours)
+            previous = zero
+            self.swap(zero, move)
 
-            if col < width - 1:
-                self.nodes[i].add_neighbour(self.nodes[i + 1])
-
-            if row > 0:
-                self.nodes[i].add_neighbour(self.nodes[i - width])
-
-            if row < height - 1:
-                self.nodes[i].add_neighbour(self.nodes[i + width])
-
-    def copy(self):
-        new_board = Board(self.width, self.height)
-        for i in range(len(self.nodes)):
-            new_board.nodes[i].set_number(self.nodes[i].get_number())
-        return new_board
+    def is_solvable(self):
+        inv_count = 0
+        arr = [x for x in self.tiles if x != 0]
+        for i in range(len(arr)):
+            for j in range(i + 1, len(arr)):
+                if arr[i] > arr[j]: inv_count += 1
+        if self.width % 2 == 1:
+            return inv_count % 2 == 0
+        else:
+            row_from_bottom = self.height - (self.zero_index // self.width)
+            return (inv_count + row_from_bottom) % 2 == 1
 
     def is_complete(self):
-        expected = list(range(1, self.width * self.height)) + [0]
-        current = [node.get_number() for node in self.nodes]
-        return current == expected
+        return self.tiles == self.goal
 
-    def find_zero(self):
-        for i in range(len(self.nodes)):
-            if self.nodes[i].get_number() == 0:
-                return i
-        return -1
+    def print_board(self):
+        for i in range(self.size):
+            if i % self.width == 0: print()
+            print(f"{self.tiles[i]:2}", end=" ")
+        print("\n")
 
-    def randomise(self, itr=7, repeat_flag=0):
-        self.depth = itr
+    @classmethod
+    def from_file(cls, filename):
+        with open(filename, "r") as f:
+            lines = f.read().splitlines()
+        height, width = map(int, lines[0].split())
+        tiles = []
+        for line in lines[1:]:
+            tiles.extend(map(int, line.split()))
+        board = cls(width, height)
+        board.load_from_list(tiles)
+        return board
 
-        previous_index = None
+    @staticmethod
+    def save_solution(filename, solution, depth):
+        with open(filename, "w") as f:
+            if solution is None:
+                f.write("-1\n")
+            else:
+                f.write(f"{len(solution)}\n")
+                f.write("".join(solution) + "\n")
 
-        for _ in range(itr):
-            zero_index = self.find_zero()
-            zero_node = self.nodes[zero_index]
-
-            neighbours = zero_node.get_neighbours()
-
-            neighbour_indices = [self.nodes.index(n) for n in neighbours]
-
-            if repeat_flag and previous_index is not None:
-                neighbour_indices = [i for i in neighbour_indices if i != previous_index]
-
-            random_index = random.choice(neighbour_indices)
-
-            previous_index = zero_index
-
-            self.nodes[zero_index].node_swap(self.nodes[random_index])
-
-    def get_nodes(self):
-        return self.nodes
-
-    def print_nodes(self):
-        size = len(self.nodes)
-        mark = ""
-
-        for i in range(size):
-            if i % self.width == 0:
-                print()
-
-            if self.nodes[i].get_number() <= 9:
-                mark = " "
-            print(mark, self.nodes[i].get_number(), end=" ")
-            mark = ""
-        print("\n\n")
-
-    def print_edges(self):
-        size = len(self.nodes)
-
-        for i in range(size):
-            print(self.nodes[i].get_number(), " : ", self.nodes[i].get_neighbours(), end="\n")
-
-    def get_state(self):
-        return tuple(node.get_number() for node in self.nodes)
-
-    def get_depth(self):
-        return self.depth
+    @staticmethod
+    def save_stats(filename, depth, visited, processed, max_depth, time_ms):
+        with open(filename, "w") as f:
+            f.write(f"{depth}\n")
+            f.write(f"{visited}\n")
+            f.write(f"{processed}\n")
+            f.write(f"{max_depth}\n")
+            f.write(f"{time_ms}\n")
 
 
 class DFS:
-    def __init__(self, board):
-        self.start_board = board
+    def __init__(self, board, move_order="LRUD", max_depth=50):
+        self.start = board
+        self.best_solution = None
+        self.best_depth = float('inf')
         self.visited = {}
-        self.iterations = 0
+        self.move_order = move_order
+        self.max_depth = max(max_depth, 20)
+        self.visited_count = 0
+        self.processed_count = 0
+        self.max_reached_depth = 0
+
+    def solve(self):
+        if not self.start.is_solvable():
+            print("Puzzle is NOT solvable")
+            return None, -1, {}
+
+        start_time = time.time()
+        lifo = [(self.start, 0, None, [])]
+
+        while lifo:
+            board, depth, prev_zero, moves_seq = lifo.pop()
+            self.max_reached_depth = max(self.max_reached_depth, depth)
+
+            state = bytes(board.tiles)
+            if state in self.visited and self.visited[state] <= depth:
+                continue
+            self.visited[state] = depth
+            self.visited_count += 1
+
+            if depth >= self.max_depth or depth >= self.best_depth:
+                continue
+
+            if board.is_complete():
+                self.best_solution = moves_seq
+                self.best_depth = depth
+                continue
+
+            zero = board.zero_index
+            for move_char in self.move_order:
+                n_index = Board.MOVE_MAP[move_char](zero, board.width, board.height)
+                if n_index is None or n_index == prev_zero:
+                    continue
+
+                new_board = Board(board.width, board.height)
+                new_board.load_from_list(board.tiles)
+                new_board.swap(zero, n_index)
+
+                lifo.append((new_board, depth + 1, zero, moves_seq + [move_char]))
+                self.processed_count += 1
+
+        end_time = time.time()
+        stats = {
+            "visited": self.visited_count,
+            "processed": self.processed_count,
+            "max_depth": self.max_reached_depth,
+            "time_ms": round((end_time - start_time) * 1000, 3)
+        }
+
+        if self.best_solution is None:
+            return None, -1, stats
+        return self.best_solution, self.best_depth, stats
+
+from collections import deque
+
+class BFS:
+    def __init__(self, board, move_order="LRUD"):
+        self.start = board
+        self.visited = {}
+        self.move_order = move_order
+        self.visited_count = 0
+        self.processed_count = 0
+        self.max_reached_depth = 0
         self.best_solution = None
         self.best_depth = float('inf')
 
     def solve(self):
-        max_depth = self.start_board.get_depth()
-        self._dfs(self.start_board, depth_=0, max_depth=max_depth)
-        print("Iterations:", self.iterations)
-        return self.best_solution, self.best_depth if self.best_solution else None
+        if not self.start.is_solvable():
+            print("Puzzle is NOT solvable")
+            return None, -1, {}
 
-    def _dfs(self, board, depth_=0, max_depth=7):
-        self.iterations += 1
+        start_time = time.time()
 
-        state = board.get_state()
+        fifo = deque()
+        fifo.append((self.start, 0, None, []))
 
-        if state in self.visited and self.visited[state] <= depth_:
-            return
-        self.visited[state] = depth_
+        while fifo:
+            board, depth, prev_zero, moves_seq = fifo.popleft()
+            self.max_reached_depth = max(self.max_reached_depth, depth)
 
-        if depth_ > max_depth:
-            return
+            state = bytes(board.tiles)
+            if state in self.visited and self.visited[state] <= depth:
+                continue
+            self.visited[state] = depth
+            self.visited_count += 1
 
-        if depth_ >= self.best_depth:
-            return
+            if board.is_complete():
+                self.best_solution = moves_seq
+                self.best_depth = depth
+                break
 
-        if board.is_complete():
-            print(depth_)
-            if depth_ < self.best_depth:
-                self.best_solution = board.copy()
-                self.best_depth = depth_
-            return
+            zero = board.zero_index
+            for move_char in self.move_order:
+                n_index = Board.MOVE_MAP[move_char](zero, board.width, board.height)
+                if n_index is None or n_index == prev_zero:
+                    continue
 
-        zero_index = board.find_zero()
-        zero_node = board.nodes[zero_index]
+                new_board = Board(board.width, board.height)
+                new_board.load_from_list(board.tiles)
+                new_board.swap(zero, n_index)
 
-        for neighbour in zero_node.get_neighbours():
-            neighbour_index = board.nodes.index(neighbour)
+                fifo.append((new_board, depth + 1, zero, moves_seq + [move_char]))
+                self.processed_count += 1
 
-            board.nodes[zero_index].node_swap(board.nodes[neighbour_index])
+        end_time = time.time()
+        stats = {
+            "visited": self.visited_count,
+            "processed": self.processed_count,
+            "max_depth": self.max_reached_depth,
+            "time_ms": round((end_time - start_time) * 1000, 3)
+        }
 
-            self._dfs(board, depth_ + 1, max_depth)
+        if self.best_solution is None:
+            return None, -1, stats
+        return self.best_solution, self.best_depth, stats
 
-            board.nodes[zero_index].node_swap(board.nodes[neighbour_index])
 
-b = Board(4,4)
-b.print_nodes()
 
-b.randomise(itr=7,repeat_flag=0)
+if __name__ == "__main__":
+    if len(sys.argv) != 6:
+        print("Usage: program dfs <move_order/heuristics> <input_file> <solution_file> <stats_file>")
+        exit(1)
 
-b.print_nodes()
+    strategy, move_order, input_file, sol_file, stats_file = sys.argv[1:6]
 
-solver = DFS(b)
-result, depth = solver.solve()
+    board = Board.from_file(input_file)
 
-result.print_nodes()
-print(depth)
+    if strategy == "dfs":
+        solver = DFS(board, move_order=move_order, max_depth=50)
+        solution, depth_, stats_ = solver.solve()
+    else:
+        solver = BFS(board, move_order=move_order)
+        solution, depth_, stats_ = solver.solve()
+
+    Board.save_solution(sol_file, solution, depth_)
+    Board.save_stats(
+        stats_file,
+        depth_,
+        stats_['visited'],
+        stats_['processed'],
+        stats_['max_depth'],
+        stats_['time_ms']
+    )
