@@ -182,6 +182,7 @@ class A_star:
                 new_board.swap(zero, n_index)
 
                 tie_breaker_og += 1
+                self.processed_count += 1
                 heapq.heappush(queue, (depth_ + 1 + self.h_func(new_board), tie_breaker_og, new_board, depth_ + 1, zero, moves_seq + [move]))
 
 
@@ -326,23 +327,34 @@ class BFS:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 7:
+    if len(sys.argv) != 6:
         print("Usage: program strategy <move_order/heuristics> <input_file> <solution_file> <stats_file>")
         exit(1)
 
-    strategy, heuristic, move_order, input_file, sol_file, stats_file = sys.argv[1:7]
+    strategy = sys.argv[1]
+    param = sys.argv[2]
+    input_file = sys.argv[3]
+    sol_file = sys.argv[4]
+    stats_file = sys.argv[5]
 
-    board = Board.from_file(input_file)
+    try:
+        board = Board.from_file(input_file)
+    except FileNotFoundError:
+        print(f"Error: File {input_file} not found.")
+        exit(1)
 
     if strategy == "dfs":
-        solver = DFS(board, move_order=move_order, max_depth=50)
+        solver = DFS(board, move_order=param, max_depth=20)
         solution, depth_, stats_ = solver.solve()
     elif strategy == "bfs":
-        solver = BFS(board, move_order=move_order)
+        solver = BFS(board, move_order=param)
+        solution, depth_, stats_ = solver.solve()
+    elif strategy == "astr":
+        solver = A_star(board, heuristic=param)
         solution, depth_, stats_ = solver.solve()
     else:
-        solver = A_star(board, heuristic, move_order=move_order)
-        solution, depth_, stats_ = solver.solve()
+        print(f"Unknown strategy: {strategy}")
+        exit(1)
 
     Board.save_solution(sol_file, solution, depth_)
     Board.save_stats(
